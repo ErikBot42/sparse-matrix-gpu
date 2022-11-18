@@ -3,9 +3,9 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
     BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferSlice, BufferUsages,
-    ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance, Maintain, MapMode,
-    PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor, QueryType, Queue, ShaderModule,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
+    Maintain, MapMode, PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor,
+    QueryType, Queue, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
 async fn run() {
@@ -48,13 +48,14 @@ async fn run() {
             count: None,
         }],
     });
-    let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
+    let compute_pipeline_layout: PipelineLayout =
+        device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
-    let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+    let pipeline: ComputePipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
         label: None,
         layout: Some(&compute_pipeline_layout),
         module: &prepare_shader(&device),
@@ -109,7 +110,13 @@ async fn run() {
     } else {
         println!("could not read data");
     }
-    print_timestamp(features, queue, query_slice);
+    if features.contains(Features::TIMESTAMP_QUERY) {
+        let ts_period = queue.get_timestamp_period();
+        let ts_data_raw = &*query_slice.get_mapped_range();
+        let ts_data: &[u64] = bytemuck::cast_slice(ts_data_raw);
+    } else {
+        println!("could not timestamp");
+    };
 }
 
 async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {
@@ -140,20 +147,6 @@ async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {
         None
     };
     (features, device, queue, query_set)
-}
-
-fn print_timestamp(features: Features, queue: Queue, query_slice: BufferSlice) {
-    if features.contains(Features::TIMESTAMP_QUERY) {
-        let ts_period = queue.get_timestamp_period();
-        let ts_data_raw = &*query_slice.get_mapped_range();
-        let ts_data: &[u64] = bytemuck::cast_slice(ts_data_raw);
-        println!(
-            "compute shader elapsed: {:?}ms",
-            (ts_data[1] - ts_data[0]) as f64 * ts_period as f64 * 1e-6
-        );
-    } else {
-        println!("could not timestamp");
-    }
 }
 
 fn prepare_shader(device: &Device) -> ShaderModule {
