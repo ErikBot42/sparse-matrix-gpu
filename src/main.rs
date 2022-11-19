@@ -2,34 +2,47 @@ use std::time::Instant;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferSlice, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
-    Maintain, MapMode, PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor,
-    QueryType, Queue, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages, ComputePipeline,
+    ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance, Maintain, MapMode,
+    PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor, QueryType, Queue,
+    ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
 async fn run() {
     env_logger::init();
-    let (features, device, queue, query_set) = prep_gpu().await;
+    let (_, device, queue, query_set) = prep_gpu().await;
 
-    let inp = vec![2.0f32; 1 << 16 - 1];
-    //let inp = vec![2.0f32; 1 << 4 - 1];
-    let input_f = &inp;
-    let input: &[u8] = bytemuck::cast_slice(input_f);
-    let input_buf: Buffer = device.create_buffer_init(&BufferInitDescriptor {
+    let input_f1: &Vec<f32> = &create_input(2.0f32);
+    let input_f2: &Vec<f32> = &create_input(3.0f32);
+
+    let input1: &[u8] = bytemuck::cast_slice(input_f1);
+    let input2: &[u8] = bytemuck::cast_slice(input_f2);
+
+    let input_buffer1: Buffer = {
+        device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: input1,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+        })
+    };
+    let input_buffer2: Buffer = {
+        device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: input2,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+        })
+    };
+
+
+    let output_buffer: Buffer = device.create_buffer(&BufferDescriptor {
         label: None,
-        contents: input,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-    });
-    let output_buf: Buffer = device.create_buffer(&BufferDescriptor {
-        label: None,
-        size: input.len() as u64,
+        size: input1.len() as u64,
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
-    // This works if the buffer is initialized, otherwise reads all 0, for some reason.
-    let query_buf = device.create_buffer_init(&BufferInitDescriptor {
+    // Must be initialized.
+    let query_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         contents: &[0; 16],
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
@@ -38,7 +51,7 @@ async fn run() {
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
         entries: &[BindGroupLayoutEntry {
-            binding: 0,
+            binding: 42,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: false },
@@ -48,75 +61,72 @@ async fn run() {
             count: None,
         }],
     });
-    let compute_pipeline_layout: PipelineLayout =
-        device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-    let pipeline: ComputePipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-        label: None,
-        layout: Some(&compute_pipeline_layout),
-        module: &prepare_shader(&device),
-        entry_point: "main",
-    });
 
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         label: None,
         layout: &bind_group_layout,
         entries: &[BindGroupEntry {
-            binding: 0,
-            resource: input_buf.as_entire_binding(),
+            binding: 42,
+            resource: input_buffer1.as_entire_binding(),
         }],
     });
 
-    let mut encoder = device.create_command_encoder(&Default::default());
-    if let Some(query_set) = &query_set {
-        encoder.write_timestamp(query_set, 0);
-    }
+    let pipeline: ComputePipeline = {
+        let compute_pipeline_layout: PipelineLayout =
+            device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&compute_pipeline_layout),
+            module: &prepare_shader(&device),
+            entry_point: "main",
+        })
+    };
+
     {
-        let mut cpass = encoder.begin_compute_pass(&Default::default());
-        for _ in 0..8 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut cpass = encoder.begin_compute_pass(&Default::default());
             cpass.set_pipeline(&pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
-            cpass.dispatch_workgroups(input_f.len() as u32, 1, 1);
+            cpass.dispatch_workgroups(input_f1.len() as u32, 1, 1);
         }
+        encoder.copy_buffer_to_buffer(&input_buffer1, 0, &output_buffer, 0, input1.len() as u64);
+        if let Some(query_set) = &query_set {
+            encoder.resolve_query_set(query_set, 0..2, &query_buffer, 0);
+        }
+        queue.submit(Some(encoder.finish()));
     }
-    if let Some(query_set) = &query_set {
-        encoder.write_timestamp(query_set, 1);
-    }
-    encoder.copy_buffer_to_buffer(&input_buf, 0, &output_buf, 0, input.len() as u64);
-    if let Some(query_set) = &query_set {
-        encoder.resolve_query_set(query_set, 0..2, &query_buf, 0);
-    }
-    queue.submit(Some(encoder.finish()));
 
-    let buf_slice = output_buf.slice(..);
+    let buf_slice = output_buffer.slice(..);
     let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
     buf_slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
-    let query_slice = query_buf.slice(..);
 
     // Assume that both buffers become available at the same time. A more careful
     // approach would be to wait for both notifications to be sent.
-    let _query_future = query_slice.map_async(MapMode::Read, |_| ());
-    let now = std::time::Instant::now();
-    device.poll(Maintain::Wait);
-    println!("Elapsed: {} ms during poll", now.elapsed().as_millis());
+    let _query_future = query_buffer.slice(..).map_async(MapMode::Read, |_| ());
+
+    {
+        let now = std::time::Instant::now();
+        device.poll(Maintain::Wait);
+        println!("Elapsed: {} ms during poll", now.elapsed().as_millis());
+    }
+
     if let Some(Ok(())) = receiver.receive().await {
         let data_raw = &*buf_slice.get_mapped_range();
         let data: &[f32] = bytemuck::cast_slice(data_raw);
-        println!("data: {:?}", &data[..10]);
+        println!("data: {:?}", &data);
     } else {
         println!("could not read data");
     }
-    if features.contains(Features::TIMESTAMP_QUERY) {
-        let ts_period = queue.get_timestamp_period();
-        let ts_data_raw = &*query_slice.get_mapped_range();
-        let ts_data: &[u64] = bytemuck::cast_slice(ts_data_raw);
-    } else {
-        println!("could not timestamp");
-    };
+}
+
+fn create_input(a: f32) -> Vec<f32> {
+    //vec![2.0f32; 1 << 16 - 1]
+    vec![a; 10]
 }
 
 async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {

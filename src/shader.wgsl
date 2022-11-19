@@ -3,19 +3,13 @@ struct DataBuf {
 }
 
 @group(0)
-@binding(0)
+@binding(42)
 var<storage, read_write> v_indices: DataBuf;
 
 @compute
-@workgroup_size(1)
+@workgroup_size(1) // does not need to execute in group
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // TODO: a more interesting computation than this.
-    var a = v_indices.data[global_id.x];
-    for (var i: i32 = 1; i < 1024*16; i++) {
-        a = a * f32(i);
-        a = sqrt(a);
-        a = a + 3.23423;
-        a = a * 2.23849;
-    }
-    v_indices.data[global_id.x] = a;
+    //v_indices.data[global_id.x] = f32(global_id.x) + v_indices.data[global_id.x];
+    //v_indices.data[global_id.x] = 1.0 + v_indices.data[global_id.x];
+    v_indices.data[0] = 1.0 + v_indices.data[0];
 }
