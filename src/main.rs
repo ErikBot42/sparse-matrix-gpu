@@ -193,6 +193,7 @@ fn prepare_shader(device: &Device) -> ShaderModule {
 }
 
 // CSR without any attached data
+#[derive(Clone, Debug)]
 struct Csr {
     indexes: Vec<u32>,
     outputs: Vec<u32>,
@@ -215,13 +216,16 @@ impl Csr {
             indexes.push(outputs.len() as u32);
             outputs.append(&mut l);
         }
+        indexes.push(outputs.len() as u32);
         Self { indexes, outputs }
     }
 }
 type DenseVector = Vec<u32>;
+type ListOfLists = Vec<Vec<u32>>;
 
 /// Spmv will do the following:
 /// y = y + Ax, where A is a sparse matrix
+#[derive(Clone, Debug)]
 struct SpmvData {
     csr: Csr,       // outputs
     x: DenseVector, // delta
@@ -233,9 +237,31 @@ impl SpmvData {
         assert_eq!(y.len(), x.len());
         Self { csr, x, y }
     }
-    fn new_random() {
-        let density = 0.1;
-        let rand = tinyrand::StdRand::default();
+    fn new_random(length: usize) -> Self {
+        use rand::prelude::*;
+        use rand::rngs::StdRng;
+        let matrix_density = 0.1;
+        let x_density = 0.8;
+        let mut rng = StdRng::seed_from_u64(42);
+        let (x, y): (DenseVector, DenseVector) = (0..length)
+            .map(|_| {
+                (
+                    if rng.gen_bool(x_density) {
+                        rng.gen::<u32>()
+                    } else {
+                        0
+                    },
+                    rng.gen::<u32>(),
+                )
+            })
+            .unzip();
+        let mut ll: ListOfLists = (0..length).map(|_| Vec::new()).collect();
+        for _ in 0..(((length * length) as f64 * matrix_density) as u32) {
+            ll[rng.gen_range(0..length)].push(rng.gen_range(0..length) as u32);
+        }
+        assert_eq!(ll.len(), length);
+        let csr = Csr::from_list_of_lists(ll);
+        Self::new(csr, x, y)
     }
 }
 
@@ -256,7 +282,8 @@ fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
             .iter()
             .map(|i| *i as usize)
         {
-            input.y[i] += delta;
+            let r = &mut input.y[i];
+            *r = r.wrapping_add(delta);
         }
     }
     input
@@ -275,7 +302,8 @@ fn spmv_cpu_unchecked_indexing(mut input: SpmvData) -> SpmvData {
                 .iter()
                 .map(|i| *i as usize)
             {
-                *input.y.get_unchecked_mut(i) += delta;
+                let r = input.y.get_unchecked_mut(i);
+                *r = r.wrapping_add(delta);
             }
         }
     }
@@ -283,4 +311,13 @@ fn spmv_cpu_unchecked_indexing(mut input: SpmvData) -> SpmvData {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    #[test]
+    fn test_unchecked_indexing() {
+        let data = SpmvData::new_random(100);
+        let data1 = spmv_cpu_reference(data.clone());
+        let data2 = spmv_cpu_unchecked_indexing(data.clone());
+        assert_eq!(data1.y, data2.y);
+    }
+}
