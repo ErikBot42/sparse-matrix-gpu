@@ -266,6 +266,10 @@ impl SpmvData {
 }
 
 fn spmv_gpu(mut input: SpmvData) -> SpmvData {
+
+    let instance = wgpu::Instance::new(wgpu::Backends::all());
+
+
     todo!()
 }
 
@@ -318,6 +322,13 @@ mod tests {
         let data = SpmvData::new_random(100);
         let data1 = spmv_cpu_reference(data.clone());
         let data2 = spmv_cpu_unchecked_indexing(data.clone());
+        assert_eq!(data1.y, data2.y);
+    }
+    #[test]
+    fn test_gpu() {
+        let data = SpmvData::new_random(100);
+        let data1 = spmv_cpu_reference(data.clone());
+        let data2 = spmv_gpu(data.clone());
         assert_eq!(data1.y, data2.y);
     }
 }
