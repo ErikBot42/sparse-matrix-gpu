@@ -10,22 +10,24 @@ use wgpu::{
 };
 fn main() {
     env_logger::init();
-    let i = 10;
+    let i = u16::MAX.into();
+    let repeat_operation = 256;
+
     let data = black_box(SpmvData::new_random(black_box(i)));
 
     let now = Instant::now();
-    let data_cpu = spmv_cpu_unchecked_indexing(data.clone());
-    let cpu_time = now.elapsed().as_millis();
-
-    let now = Instant::now();
-    let data_gpu = spmv_gpu(data.clone());
+    let data_gpu = spmv_gpu(data.clone(), repeat_operation);
     let gpu_time = now.elapsed().as_millis();
 
-    assert_eq!(data_cpu.y, data_gpu.y);
-    println!("Everything works as expected.");
+    let now = Instant::now();
+    let data_cpu = spmv_cpu_unchecked_indexing(data.clone(), repeat_operation);
+    let cpu_time = now.elapsed().as_millis();
+
     println!("Data size: {i}");
     println!("Elapsed GPU: {gpu_time} ms");
     println!("Elapsed CPU: {cpu_time} ms");
+    assert!(data_cpu.y == data_gpu.y, "Compution not equal");
+    println!("Everything completed as expected.");
 }
 
 async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {
@@ -145,11 +147,11 @@ impl SpmvData {
     }
 }
 
-fn spmv_gpu(mut input: SpmvData) -> SpmvData {
-    pollster::block_on(spmv_gpu_i(input))
+fn spmv_gpu(input: SpmvData, repeat_operation: usize) -> SpmvData {
+    pollster::block_on(spmv_gpu_i(input, repeat_operation))
 }
 
-async fn spmv_gpu_i(input: SpmvData) -> SpmvData {
+async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -167,13 +169,19 @@ async fn spmv_gpu_i(input: SpmvData) -> SpmvData {
         )
         .await
         .unwrap();
-
+    
+    dbg!(device.limits());
     dbg!(adapter.get_info());
 
-    spmv_gpu_ei(&device, &queue, input).await
+    spmv_gpu_ei(&device, &queue, input, repeat_operation).await
 }
 
-async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> SpmvData {
+async fn spmv_gpu_ei(
+    device: &Device,
+    queue: &Queue,
+    mut input: SpmvData,
+    repeat_operation: usize,
+) -> SpmvData {
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
@@ -243,7 +251,9 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
-        cpass.dispatch_workgroups((&input.y).len() as u32, 1, 1);
+        for _ in 0..repeat_operation {
+            cpass.dispatch_workgroups((&input.y).len() as u32, 1, 1);
+        }
     }
     encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, y_size);
     queue.submit(Some(encoder.finish()));
@@ -295,29 +305,31 @@ fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
     input
 }
 
-fn spmv_cpu_unchecked_indexing(mut input: SpmvData) -> SpmvData {
-    spmv_cpu_unchecked_indexing_in_place(input)
+fn spmv_cpu_unchecked_indexing(mut input: SpmvData, repeat_operation: usize) -> SpmvData {
+    spmv_cpu_unchecked_indexing_in_place(&mut input, repeat_operation);
+    input
 }
 
-fn spmv_cpu_unchecked_indexing_in_place(mut input: SpmvData) -> SpmvData {
+fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: usize) {
     unsafe {
-        for i in 0..input.y.len() {
-            let from_index = *input.csr.indexes.get_unchecked(i) as usize;
-            let to_index = *input.csr.indexes.get_unchecked(i + 1) as usize;
-            let delta = *input.x.get_unchecked(i);
-            for i in input
-                .csr
-                .outputs
-                .get_unchecked(from_index..to_index)
-                .iter()
-                .map(|i| *i as usize)
-            {
-                let r = input.y.get_unchecked_mut(i);
-                *r = r.wrapping_add(delta);
+        for _ in 0..repeat_operation {
+            for i in 0..input.y.len() {
+                let from_index = *input.csr.indexes.get_unchecked(i) as usize;
+                let to_index = *input.csr.indexes.get_unchecked(i + 1) as usize;
+                let delta = *input.x.get_unchecked(i);
+                for i in input
+                    .csr
+                    .outputs
+                    .get_unchecked(from_index..to_index)
+                    .iter()
+                    .map(|i| *i as usize)
+                {
+                    let r = input.y.get_unchecked_mut(i);
+                    *r = black_box(r.wrapping_add(delta));
+                }
             }
         }
     }
-    input
 }
 
 #[cfg(test)]
@@ -329,7 +341,7 @@ mod tests {
             dbg!(i);
             let data = SpmvData::new_random(i);
             let data1 = spmv_cpu_reference(data.clone());
-            let data2 = spmv_cpu_unchecked_indexing(data.clone());
+            let data2 = spmv_cpu_unchecked_indexing(data.clone(), 1);
             assert_eq!(data1.y, data2.y);
         }
     }
@@ -339,7 +351,7 @@ mod tests {
             dbg!(i);
             let data = SpmvData::new_random(i);
             let data1 = spmv_cpu_reference(data.clone());
-            let data2 = spmv_gpu(data.clone());
+            let data2 = spmv_gpu(data.clone(), 1);
             assert_eq!(data1.y, data2.y);
         }
     }

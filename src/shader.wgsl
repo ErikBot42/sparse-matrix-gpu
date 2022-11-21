@@ -29,7 +29,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let from_index = indexes[i];
     let to_index   = indexes[i+u32(1)];
     let delta      = xs[i];
-    if delta == u32(0) {discard}
+    //if delta == u32(0) {discard}
     for (var i = from_index; i<to_index; i++) {
         let output = outputs[i];
         atomicAdd(&(ys[output]), delta);
