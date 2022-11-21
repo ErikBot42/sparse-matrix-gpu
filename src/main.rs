@@ -2,10 +2,10 @@ use std::time::Instant;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages, ComputePipeline,
-    ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance, Maintain, MapMode,
-    PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor, QueryType, Queue,
-    ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    BindingType, Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
+    Maintain, MapMode, PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor,
+    QueryType, Queue, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
 async fn run() {
@@ -266,11 +266,160 @@ impl SpmvData {
 }
 
 fn spmv_gpu(mut input: SpmvData) -> SpmvData {
+    env_logger::init();
+    pollster::block_on(spmv_gpu_i(input))
+}
 
+async fn spmv_gpu_i(input: SpmvData) -> SpmvData {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await
+        .unwrap();
 
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
 
-    todo!()
+    dbg!(adapter.get_info());
+
+    spmv_gpu_ei(&device, &queue, input).await
+}
+
+async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> SpmvData {
+    let numbers = &input.y;
+
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
+    });
+
+    let slice_size = numbers.len() * std::mem::size_of::<u32>();
+    let size = slice_size as BufferAddress;
+
+    //let y_size = (input.y.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+
+    //let make_buffer = |slice: &[u32], usage: wgpu::BufferUsages| -> Buffer {
+    //    device.create_buffer_init(&BufferInitDescriptor {
+    //        label: None,
+    //        contents: bytemuck::cast_slice(slice),
+    //        usage,
+    //    })
+    //};
+    //let default_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
+    //let x_buffer = make_buffer(&input.x, default_usage);
+    //let y_buffer = make_buffer(&input.y, default_usage);
+    //let a_indexes_buffer = make_buffer(&input.csr.indexes, default_usage);
+    //let a_outputs_buffer = make_buffer(&input.csr.outputs, default_usage);
+
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let y_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Storage Buffer"),
+        contents: bytemuck::cast_slice(&input.y),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &cs_module,
+        entry_point: "main",
+    });
+
+    //let foo = |x| BindGroupLayoutEntry {
+    //    binding: x,
+    //    visibility: ShaderStages::COMPUTE,
+    //    ty: BindingType::Buffer {
+    //        ty: BufferBindingType::Storage { read_only: false },
+    //        has_dynamic_offset: false,
+    //        min_binding_size: None,
+    //    },
+    //    count: None,
+    //};
+
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    //let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+    //    label: None,
+    //    entries: &[foo(0), foo(1), foo(2), foo(3)],
+    //});
+
+    //dbg!(&bind_group_layout);
+    //dbg!(&bind_group_entries);
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: y_buffer.as_entire_binding(),
+            },
+            //wgpu::BindGroupEntry {
+            //    binding: 2,
+            //    resource: a_indexes_buffer.as_entire_binding(),
+            //},
+            //wgpu::BindGroupEntry {
+            //    binding: 3,
+            //    resource: a_outputs_buffer.as_entire_binding(),
+            //},
+        ],
+    });
+
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
+        cpass.set_pipeline(&compute_pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.insert_debug_marker("compute spmv");
+        cpass.dispatch_workgroups(numbers.len() as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, size);
+    queue.submit(Some(encoder.finish()));
+
+    let buffer_slice = staging_buffer.slice(..);
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+    device.poll(wgpu::Maintain::Wait);
+
+    input.y = if let Some(Ok(())) = receiver.receive().await {
+        // Gets contents of buffer
+        let data = buffer_slice.get_mapped_range();
+        // Since contents are got in bytes, this converts these bytes back to u32
+        let result = bytemuck::cast_slice(&data).to_vec();
+
+        // With the current interface, we have to make sure all mapped views are
+        // dropped before we unmap the buffer.
+        drop(data);
+        staging_buffer.unmap(); // Unmaps buffer from memory
+                                // If you are familiar with C++ these 2 lines can be thought of similarly to:
+                                //   delete myPointer;
+                                //   myPointer = NULL;
+                                // It effectively frees the memory
+
+        // Returns data from buffer
+        result
+    } else {
+        panic!("failed to run compute on gpu!")
+    };
+    input
 }
 
 fn main() {
