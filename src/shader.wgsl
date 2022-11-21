@@ -3,13 +3,13 @@
 //}
 
 
-//@group(0)
-//@binding(0)
-//var<storage, read_write> second_array: array<atomic<u32>>;
 
 @group(0)
 @binding(0)
 var<storage, read_write> first_array: array<atomic<u32>>;
+@group(0)
+@binding(1)
+var<storage, read_write> second_array: array<atomic<u32>>;
 
 
 //@group(0)
@@ -26,6 +26,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     for (var i = 0; i<256; i++) {
         //first_array[global_id.x] += u32(1);
         first_array[i] += u32(1);
+        second_array[i] += u32(1);
         //atomicAdd(&(first_array[i]), u32(1));
         //atomicAdd(&(first_array[global_id.x]), u32(1));
         //first_array[global_id.x] = atomicLoad( &(first_array[0]) );

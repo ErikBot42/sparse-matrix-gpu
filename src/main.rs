@@ -295,41 +295,37 @@ async fn spmv_gpu_i(input: SpmvData) -> SpmvData {
 }
 
 async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> SpmvData {
-    let numbers = &input.y;
 
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
     });
 
-    let slice_size = numbers.len() * std::mem::size_of::<u32>();
-    let size = slice_size as BufferAddress;
-
-    //let y_size = (input.y.len() * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
-
-    //let make_buffer = |slice: &[u32], usage: wgpu::BufferUsages| -> Buffer {
-    //    device.create_buffer_init(&BufferInitDescriptor {
-    //        label: None,
-    //        contents: bytemuck::cast_slice(slice),
-    //        usage,
-    //    })
-    //};
-    //let default_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
-    //let x_buffer = make_buffer(&input.x, default_usage);
-    //let y_buffer = make_buffer(&input.y, default_usage);
-    //let a_indexes_buffer = make_buffer(&input.csr.indexes, default_usage);
-    //let a_outputs_buffer = make_buffer(&input.csr.outputs, default_usage);
+    let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
+    let y_size = y_slice_size as BufferAddress;
 
     let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size,
+        size: y_size,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
+    let default_usages = BufferUsages::STORAGE
+            | BufferUsages::COPY_DST
+            | BufferUsages::COPY_SRC;
+
     let y_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Storage Buffer"),
+        label: Some("Y Buffer"),
         contents: bytemuck::cast_slice(&input.y),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    let x_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("X Buffer"),
+        contents: bytemuck::cast_slice(&input.x),
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,
@@ -342,25 +338,9 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
         entry_point: "main",
     });
 
-    //let foo = |x| BindGroupLayoutEntry {
-    //    binding: x,
-    //    visibility: ShaderStages::COMPUTE,
-    //    ty: BindingType::Buffer {
-    //        ty: BufferBindingType::Storage { read_only: false },
-    //        has_dynamic_offset: false,
-    //        min_binding_size: None,
-    //    },
-    //    count: None,
-    //};
-
+    
+    // this is obtained from the **shader**
     let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
-    //let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-    //    label: None,
-    //    entries: &[foo(0), foo(1), foo(2), foo(3)],
-    //});
-
-    //dbg!(&bind_group_layout);
-    //dbg!(&bind_group_entries);
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
@@ -369,6 +349,10 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: y_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: x_buffer.as_entire_binding(),
             },
             //wgpu::BindGroupEntry {
             //    binding: 2,
@@ -388,9 +372,9 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         cpass.insert_debug_marker("compute spmv");
-        cpass.dispatch_workgroups(numbers.len() as u32, 1, 1);
+        cpass.dispatch_workgroups((&input.y).len() as u32, 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, size);
+    encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, y_size);
     queue.submit(Some(encoder.finish()));
 
     let buffer_slice = staging_buffer.slice(..);
