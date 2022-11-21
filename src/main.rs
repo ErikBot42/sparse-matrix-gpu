@@ -295,7 +295,6 @@ async fn spmv_gpu_i(input: SpmvData) -> SpmvData {
 }
 
 async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> SpmvData {
-
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
@@ -311,25 +310,20 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
         mapped_at_creation: false,
     });
 
-    let default_usages = BufferUsages::STORAGE
-            | BufferUsages::COPY_DST
-            | BufferUsages::COPY_SRC;
+    let default_usages = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
 
-    let y_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Y Buffer"),
-        contents: bytemuck::cast_slice(&input.y),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-    });
+    let create_buffer = |content: &[u32], usage: BufferUsages| -> Buffer {
+        device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&content),
+            usage,
+        })
+    };
 
-    let x_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("X Buffer"),
-        contents: bytemuck::cast_slice(&input.x),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-    });
+    let y_buffer = create_buffer(&input.y, default_usages);
+    let x_buffer = create_buffer(&input.x, default_usages);
+    let a_indexes_buffer = create_buffer(&input.csr.indexes, default_usages);
+    let a_outputs_buffer = create_buffer(&input.csr.outputs, default_usages);
 
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,
@@ -338,7 +332,6 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
         entry_point: "main",
     });
 
-    
     // this is obtained from the **shader**
     let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
 
@@ -354,14 +347,14 @@ async fn spmv_gpu_ei(device: &Device, queue: &Queue, mut input: SpmvData) -> Spm
                 binding: 1,
                 resource: x_buffer.as_entire_binding(),
             },
-            //wgpu::BindGroupEntry {
-            //    binding: 2,
-            //    resource: a_indexes_buffer.as_entire_binding(),
-            //},
-            //wgpu::BindGroupEntry {
-            //    binding: 3,
-            //    resource: a_outputs_buffer.as_entire_binding(),
-            //},
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: a_indexes_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: a_outputs_buffer.as_entire_binding(),
+            },
         ],
     });
 
