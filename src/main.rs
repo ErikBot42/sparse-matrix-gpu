@@ -197,7 +197,6 @@ async fn spmv_gpu_ei(
         mapped_at_creation: false,
     });
 
-    let default_usages = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
 
     let create_buffer = |content: &[u32], usage: BufferUsages| -> Buffer {
         device.create_buffer_init(&BufferInitDescriptor {
@@ -206,11 +205,14 @@ async fn spmv_gpu_ei(
             usage,
         })
     };
+    let default_usages = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
+
+    let read_only_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
 
     let y_buffer = create_buffer(&input.y, default_usages);
-    let x_buffer = create_buffer(&input.x, default_usages);
-    let a_indexes_buffer = create_buffer(&input.csr.indexes, default_usages);
-    let a_outputs_buffer = create_buffer(&input.csr.outputs, default_usages);
+    let x_buffer = create_buffer(&input.x, read_only_usage);
+    let a_indexes_buffer = create_buffer(&input.csr.indexes, read_only_usage);
+    let a_outputs_buffer = create_buffer(&input.csr.outputs, read_only_usage);
 
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,

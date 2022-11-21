@@ -10,16 +10,16 @@ var<storage, read_write> ys: array<atomic<u32>>;
 
 @group(0)
 @binding(1)
-var<storage, read_write> xs: array<u32>;
+var<storage, read> xs: array<u32>;
 
 
 @group(0)
 @binding(2)
-var<storage, read_write> indexes: array<u32>;
+var<storage, read> indexes: array<u32>;
 
 @group(0)
 @binding(3)
-var<storage, read_write> outputs: array<u32>;
+var<storage, read> outputs: array<u32>;
 
 @compute
 @workgroup_size(1) // does not need to execute in group
