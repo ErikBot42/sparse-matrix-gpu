@@ -11,7 +11,7 @@ use wgpu::{
 fn main() {
     env_logger::init();
     let i = u16::MAX.into();
-    let repeat_operation = 1;
+    let repeat_operation = 32;
 
     let data = black_box(SpmvData::new_random(black_box(i)));
 
@@ -253,7 +253,7 @@ async fn spmv_gpu_ei(
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         for _ in 0..repeat_operation {
-            cpass.dispatch_workgroups((&input.y).len() as u32, 32, 32);
+            cpass.dispatch_workgroups((&input.y).len() as u32, 1, 1);
         }
     }
     encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, y_size);
