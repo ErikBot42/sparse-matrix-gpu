@@ -11,7 +11,7 @@ use wgpu::{
 fn main() {
     env_logger::init();
     let i = u16::MAX.into();
-    let repeat_operation = 256;
+    let repeat_operation = 1;
 
     let data = black_box(SpmvData::new_random(black_box(i)));
 
@@ -169,7 +169,7 @@ async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
         )
         .await
         .unwrap();
-    
+
     dbg!(device.limits());
     dbg!(adapter.get_info());
 
@@ -196,7 +196,6 @@ async fn spmv_gpu_ei(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-
 
     let create_buffer = |content: &[u32], usage: BufferUsages| -> Buffer {
         device.create_buffer_init(&BufferInitDescriptor {
@@ -254,7 +253,7 @@ async fn spmv_gpu_ei(
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         for _ in 0..repeat_operation {
-            cpass.dispatch_workgroups((&input.y).len() as u32, 1, 1);
+            cpass.dispatch_workgroups((&input.y).len() as u32, 32, 32);
         }
     }
     encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging_buffer, 0, y_size);
