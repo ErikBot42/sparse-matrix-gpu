@@ -8,6 +8,10 @@ use wgpu::{
     Maintain, MapMode, PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor,
     QueryType, Queue, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
+
+#[cfg(test)]
+mod tests;
+
 fn main() {
     env_logger::init();
     let i = u16::MAX.into();
@@ -70,34 +74,6 @@ fn prepare_shader(device: &Device) -> ShaderModule {
     cs_module
 }
 
-// CSR without any attached data
-#[derive(Clone, Debug)]
-struct Csr {
-    indexes: Vec<u32>,
-    outputs: Vec<u32>,
-}
-impl Csr {
-    // List of lists to compressed sparse row
-    fn from_list_of_lists(ll: Vec<Vec<u32>>) -> Self {
-        let ll: Vec<Vec<u32>> = ll
-            .into_iter()
-            .map(|x| {
-                let mut x = x;
-                x.sort();
-                x.dedup();
-                x
-            })
-            .collect();
-        let mut indexes: Vec<u32> = Vec::new();
-        let mut outputs: Vec<u32> = Vec::new();
-        for mut l in ll {
-            indexes.push(outputs.len() as u32);
-            outputs.append(&mut l);
-        }
-        indexes.push(outputs.len() as u32);
-        Self { indexes, outputs }
-    }
-}
 type DenseVector = Vec<u32>;
 type ListOfLists = Vec<Vec<u32>>;
 
@@ -332,6 +308,45 @@ fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: 
         }
     }
 }
+use sparse::Csr;
+mod sparse {
 
-#[cfg(test)]
-mod tests;
+    /// List of lists
+    /// Inner is exposed
+    pub(super) struct Lil {
+        pub(super) i: Vec<Vec<u32>>,
+    }
+    impl Lil {
+
+    }
+
+    /// CSR without any attached data
+    /// Inner is exposed
+    #[derive(Clone, Debug)]
+    pub(super) struct Csr {
+        pub(super) indexes: Vec<u32>,
+        pub(super) outputs: Vec<u32>,
+    }
+    impl Csr {
+        // List of lists to compressed sparse row
+        pub(super) fn from_list_of_lists(ll: Vec<Vec<u32>>) -> Self {
+            let ll: Vec<Vec<u32>> = ll
+                .into_iter()
+                .map(|x| {
+                    let mut x = x;
+                    x.sort();
+                    x.dedup();
+                    x
+                })
+                .collect();
+            let mut indexes: Vec<u32> = Vec::new();
+            let mut outputs: Vec<u32> = Vec::new();
+            for mut l in ll {
+                indexes.push(outputs.len() as u32);
+                outputs.append(&mut l);
+            }
+            indexes.push(outputs.len() as u32);
+            Self { indexes, outputs }
+        }
+    }
+}
