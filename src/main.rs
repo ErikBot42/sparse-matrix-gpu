@@ -64,16 +64,6 @@ async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {
     (features, device, queue, query_set)
 }
 
-fn prepare_shader(device: &Device) -> ShaderModule {
-    let start_instant = Instant::now();
-    let cs_module = device.create_shader_module(ShaderModuleDescriptor {
-        label: None,
-        source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
-    });
-    println!("shader compilation {:?}", start_instant.elapsed());
-    cs_module
-}
-
 type DenseVector = Vec<u32>;
 type ListOfLists = Vec<Vec<u32>>;
 
@@ -310,8 +300,8 @@ fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: 
         }
     }
 }
-use sparse::Csr;
 use sparse::Csc;
+use sparse::Csr;
 use sparse::Lil;
 mod sparse {
 
@@ -361,7 +351,6 @@ mod sparse {
             }
             indexes.push(outputs.len() as u32);
             (indexes, outputs)
-
         }
     }
 
@@ -376,7 +365,7 @@ mod sparse {
         // List of lists to compressed sparse row
         pub(super) fn from_lil(lil: &Lil) -> Self {
             let (indexes, outputs) = Cs::from_lil(lil);
-            Self {indexes, outputs}
+            Self { indexes, outputs }
         }
     }
 
@@ -391,10 +380,9 @@ mod sparse {
         // List of lists to compressed sparse row
         pub(super) fn from_lil(lil: &Lil) -> Self {
             let (indexes, outputs) = Cs::from_lil(&lil.reversed());
-            Self {indexes, outputs}
+            Self { indexes, outputs }
         }
     }
-
 
     #[cfg(test)]
     mod tests {
