@@ -34,36 +34,6 @@ fn main() {
     println!("Everything completed as expected.");
 }
 
-async fn prep_gpu() -> (Features, Device, Queue, Option<QuerySet>) {
-    let instance = Instance::new(Backends::PRIMARY);
-    let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    let features = adapter.features();
-    let (device, queue) = adapter
-        .request_device(
-            &DeviceDescriptor {
-                label: None,
-                features: features & Features::TIMESTAMP_QUERY,
-                limits: Default::default(),
-            },
-            None,
-        )
-        .await
-        .unwrap();
-
-    dbg!(&device);
-    dbg!(device.limits());
-    let query_set = if features.contains(Features::TIMESTAMP_QUERY) {
-        Some(device.create_query_set(&QuerySetDescriptor {
-            count: 2,
-            ty: QueryType::Timestamp,
-            label: None,
-        }))
-    } else {
-        None
-    };
-    (features, device, queue, query_set)
-}
-
 type DenseVector = Vec<u32>;
 type ListOfLists = Vec<Vec<u32>>;
 
@@ -111,7 +81,7 @@ impl SpmvData {
             ll[rng.gen_range(0..length)].push(rng.gen_range(0..length) as u32);
         }
         assert_eq!(ll.len(), length);
-        Self::new(&Lil::construct(ll), x, y)
+        Self::new(&Lil::new(ll), x, y)
     }
 }
 
@@ -258,6 +228,7 @@ async fn spmv_gpu_ei(
     input
 }
 
+#[cfg(test)]
 fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
     for i in 0..input.y.len() {
         let from_index = input.csr.indexes[i] as usize;
@@ -312,15 +283,20 @@ mod sparse {
         pub(super) i: Vec<Vec<u32>>,
     }
     impl Lil {
-        pub(super) fn construct(mut i: Vec<Vec<u32>>) -> Self {
+        pub(super) fn new(mut i: Vec<Vec<u32>>) -> Self {
             i.iter_mut().for_each(|s| s.sort());
             Self { i }
         }
-        pub(super) fn new(size: usize) -> Self {
-            Self::construct(Self::new_i(size))
-        }
         pub(super) fn new_i(size: usize) -> Vec<Vec<u32>> {
             (0..size).map(|_| Vec::new()).collect()
+        }
+        #[cfg(test)]
+        pub(super) fn new_random<F: rand::Rng>(rng: &mut F, density: f32, size: usize) -> Self {
+            let mut tmp = Self::new_i(size);
+            for _ in 0..(size as f32 * density) as usize {
+                tmp[rng.gen_range(0..size)].push(rng.gen_range(0..size) as u32);
+            }
+            Self::new(tmp)
         }
         pub(super) fn reversed(&self) -> Self {
             let mut tmp = Self::new_i(self.i.len());
@@ -329,14 +305,7 @@ mod sparse {
                     tmp[*j as usize].push(i as u32)
                 }
             }
-            Self::construct(tmp)
-        }
-        pub(super) fn new_random<F: rand::Rng>(rng: &mut F, density: f32, size: usize) -> Self {
-            let mut tmp = Self::new_i(size);
-            for _ in 0..(size as f32 * density) as usize {
-                tmp[rng.gen_range(0..size)].push(rng.gen_range(0..size) as u32);
-            }
-            Self::construct(tmp)
+            Self::new(tmp)
         }
     }
 
