@@ -89,13 +89,12 @@ fn spmv_gpu(input: SpmvData, repeat_operation: usize) -> SpmvData {
     pollster::block_on(spmv_gpu_i(input, repeat_operation))
 }
 
-async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
+async fn prep_gpu() -> (Device, Queue) {
     let instance = wgpu::Instance::new(wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
         .unwrap();
-
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -107,12 +106,15 @@ async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
         )
         .await
         .unwrap();
-
     dbg!(device.limits());
     dbg!(adapter.get_info());
-
+    (device, queue)
+}
+async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
+    let (device, queue) = prep_gpu().await;
     spmv_gpu_ei(&device, &queue, input, repeat_operation).await
 }
+
 
 async fn spmv_gpu_ei(
     device: &Device,
@@ -120,9 +122,10 @@ async fn spmv_gpu_ei(
     mut input: SpmvData,
     repeat_operation: usize,
 ) -> SpmvData {
+    let source = include_str!("shader.wgsl");
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
 
     let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
