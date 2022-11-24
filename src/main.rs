@@ -24,7 +24,7 @@ fn main() {
     let gpu_time = now.elapsed().as_millis();
 
     let now = Instant::now();
-    let data_cpu = spmv_cpu_unchecked_indexing(data.clone(), repeat_operation);
+    let data_cpu = spmv_cpu_unchecked_indexing(data, repeat_operation);
     let cpu_time = now.elapsed().as_millis();
 
     println!("Data size: {i}");
@@ -313,11 +313,37 @@ mod sparse {
 
     /// List of lists
     /// Inner is exposed
+    #[derive(Debug, PartialEq, Eq)]
     pub(super) struct Lil {
         pub(super) i: Vec<Vec<u32>>,
     }
     impl Lil {
-
+        fn construct(mut i: Vec<Vec<u32>>) -> Self {
+            i.iter_mut().for_each(|s| s.sort());
+            Self { i }
+        }
+        pub(super) fn new(size: usize) -> Self {
+            Self::construct(Self::new_i(size))
+        }
+        pub(super) fn new_i(size: usize) -> Vec<Vec<u32>> {
+            (0..size).map(|_| Vec::new()).collect()
+        }
+        pub(super) fn reversed(&self) -> Self {
+            let mut tmp = Self::new_i(self.i.len());
+            for (i, list) in self.i.iter().enumerate() {
+                for j in list {
+                    tmp[*j as usize].push(i as u32)
+                }
+            }
+            Self::construct(tmp)
+        }
+        pub(super) fn new_random<F: rand::Rng>(rng: &mut F, density: f32, size: usize) -> Self {
+            let mut tmp = Self::new_i(size);
+            for _ in 0..(size as f32 * density) as usize {
+                tmp[rng.gen_range(0..size)].push(rng.gen_range(0..size) as u32);
+            }
+            Self::construct(tmp)
+        }
     }
 
     /// CSR without any attached data
@@ -347,6 +373,23 @@ mod sparse {
             }
             indexes.push(outputs.len() as u32);
             Self { indexes, outputs }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn test_sparse_lil() {
+            use rand::prelude::*;
+            use rand::rngs::StdRng;
+            let matrix_density = 4.0;
+            let mut rng = StdRng::seed_from_u64(42);
+
+            let lil = Lil::new_random(&mut rng, matrix_density, 128);
+            let lil_reversed = lil.reversed();
+            assert_ne!(lil, lil_reversed);
+            assert_eq!(lil, lil_reversed.reversed());
         }
     }
 }
