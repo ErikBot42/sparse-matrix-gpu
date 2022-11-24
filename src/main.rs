@@ -82,14 +82,17 @@ type ListOfLists = Vec<Vec<u32>>;
 #[derive(Clone, Debug)]
 struct SpmvData {
     csr: Csr,       // outputs
+    csc: Csc,       // inputs
     x: DenseVector, // delta
     y: DenseVector, // acc
 }
 impl SpmvData {
-    fn new(csr: Csr, x: DenseVector, y: DenseVector) -> Self {
+    fn new(lil: &Lil, x: DenseVector, y: DenseVector) -> Self {
+        let csr = Csr::from_lil(lil);
+        let csc = Csc::from_lil(lil);
         assert_eq!(csr.indexes.len() - 1, x.len());
         assert_eq!(y.len(), x.len());
-        Self { csr, x, y }
+        Self { csc, csr, x, y }
     }
     fn new_random(length: usize) -> Self {
         use rand::prelude::*;
@@ -111,15 +114,14 @@ impl SpmvData {
             .unzip();
         let mut ll: ListOfLists = (0..length).map(|_| Vec::new()).collect();
 
-        let connections_to_add = ((length * length) as f64 * matrix_density) as u32;
+        //let connections_to_add = ((length * length) as f64 * matrix_density) as u32;
         let connections_to_add = length * 16;
 
         for _ in 0..connections_to_add {
             ll[rng.gen_range(0..length)].push(rng.gen_range(0..length) as u32);
         }
         assert_eq!(ll.len(), length);
-        let csr = Csr::from_list_of_lists(ll);
-        Self::new(csr, x, y)
+        Self::new(&Lil::construct(ll), x, y)
     }
 }
 
@@ -309,6 +311,8 @@ fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: 
     }
 }
 use sparse::Csr;
+use sparse::Csc;
+use sparse::Lil;
 mod sparse {
 
     /// List of lists
@@ -318,7 +322,7 @@ mod sparse {
         pub(super) i: Vec<Vec<u32>>,
     }
     impl Lil {
-        fn construct(mut i: Vec<Vec<u32>>) -> Self {
+        pub(super) fn construct(mut i: Vec<Vec<u32>>) -> Self {
             i.iter_mut().for_each(|s| s.sort());
             Self { i }
         }
@@ -346,6 +350,21 @@ mod sparse {
         }
     }
 
+    struct Cs {}
+    impl Cs {
+        fn from_lil(lil: &Lil) -> (Vec<u32>, Vec<u32>) {
+            let mut indexes: Vec<u32> = Vec::new();
+            let mut outputs: Vec<u32> = Vec::new();
+            for mut l in lil.i.iter().cloned() {
+                indexes.push(outputs.len() as u32);
+                outputs.append(&mut l);
+            }
+            indexes.push(outputs.len() as u32);
+            (indexes, outputs)
+
+        }
+    }
+
     /// CSR without any attached data
     /// Inner is exposed
     #[derive(Clone, Debug)]
@@ -355,26 +374,27 @@ mod sparse {
     }
     impl Csr {
         // List of lists to compressed sparse row
-        pub(super) fn from_list_of_lists(ll: Vec<Vec<u32>>) -> Self {
-            let ll: Vec<Vec<u32>> = ll
-                .into_iter()
-                .map(|x| {
-                    let mut x = x;
-                    x.sort();
-                    x.dedup();
-                    x
-                })
-                .collect();
-            let mut indexes: Vec<u32> = Vec::new();
-            let mut outputs: Vec<u32> = Vec::new();
-            for mut l in ll {
-                indexes.push(outputs.len() as u32);
-                outputs.append(&mut l);
-            }
-            indexes.push(outputs.len() as u32);
-            Self { indexes, outputs }
+        pub(super) fn from_lil(lil: &Lil) -> Self {
+            let (indexes, outputs) = Cs::from_lil(lil);
+            Self {indexes, outputs}
         }
     }
+
+    /// CSC without any attached data
+    /// Inner is exposed
+    #[derive(Clone, Debug)]
+    pub(super) struct Csc {
+        pub(super) indexes: Vec<u32>,
+        pub(super) outputs: Vec<u32>,
+    }
+    impl Csc {
+        // List of lists to compressed sparse row
+        pub(super) fn from_lil(lil: &Lil) -> Self {
+            let (indexes, outputs) = Cs::from_lil(&lil.reversed());
+            Self {indexes, outputs}
+        }
+    }
+
 
     #[cfg(test)]
     mod tests {
