@@ -127,6 +127,13 @@ async fn spmv_gpu_ei(
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &cs_module,
+        entry_point: "main",
+    });
+
 
     let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
     let y_size = y_slice_size as BufferAddress;
@@ -154,12 +161,6 @@ async fn spmv_gpu_ei(
     let a_indexes_buffer = create_buffer(&input.csr.indexes, read_only_usage);
     let a_outputs_buffer = create_buffer(&input.csr.outputs, read_only_usage);
 
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &cs_module,
-        entry_point: "main",
-    });
 
     // this is obtained from the **shader**
     let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
