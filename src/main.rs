@@ -2,11 +2,12 @@ use std::hint::black_box;
 use std::time::Instant;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, Buffer, BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
-    Maintain, MapMode, PipelineLayout, PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor,
-    QueryType, Queue, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferAddress,
+    BufferBindingType, BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor,
+    Device, DeviceDescriptor, Features, Instance, Maintain, MapMode, PipelineLayout,
+    PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor, QueryType, Queue, ShaderModule,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
 #[cfg(test)]
@@ -49,8 +50,9 @@ struct SpmvData {
 impl SpmvData {
     fn new(lil: &Lil, x: DenseVector, y: DenseVector) -> Self {
         let csr = Csr::from_lil(lil);
-        let csc = Csc::from_lil(lil);
+        let csc = Csc::from_lil(&lil.reversed());
         assert_eq!(csr.indexes.len() - 1, x.len());
+        assert_eq!(csc.indexes.len() - 1, x.len());
         assert_eq!(y.len(), x.len());
         Self { csc, csr, x, y }
     }
@@ -115,7 +117,6 @@ async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
     spmv_gpu_ei(&device, &queue, input, repeat_operation).await
 }
 
-
 async fn spmv_gpu_ei(
     device: &Device,
     queue: &Queue,
@@ -123,51 +124,45 @@ async fn spmv_gpu_ei(
     repeat_operation: usize,
 ) -> SpmvData {
     let source = include_str!("shader.wgsl");
-    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
-    });
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &cs_module,
-        entry_point: "main",
-    });
-
+    let entry_point = "main";
+    let compute_pipeline = make_compute_pipeline(device, source, entry_point);
 
     let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
     let y_size = y_slice_size as BufferAddress;
 
-    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let staging_buffer: Buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: y_size,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
-    let create_buffer = |content: &[u32], usage: BufferUsages| -> Buffer {
-        device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&content),
-            usage,
-        })
-    };
     let default_usages = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
 
     let read_only_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
 
-    let y_buffer = create_buffer(&input.y, default_usages);
-    let x_buffer = create_buffer(&input.x, read_only_usage);
-    let a_indexes_buffer = create_buffer(&input.csr.indexes, read_only_usage);
-    let a_outputs_buffer = create_buffer(&input.csr.outputs, read_only_usage);
-
+    let y_buffer = create_buffer(device, &input.y, default_usages);
+    let x_buffer = create_buffer(device, &input.x, read_only_usage);
+    let a_indexes_buffer = create_buffer(device, &input.csr.indexes, read_only_usage);
+    let a_outputs_buffer = create_buffer(device, &input.csr.outputs, read_only_usage);
 
     // this is obtained from the **shader**
-    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group_layout = &compute_pipeline.get_bind_group_layout(0);
+
+    let bind_group = make_bind_group(
+        device,
+        bind_group_layout,
+        &[
+            (0, &y_buffer),
+            (1, &x_buffer),
+            (2, &a_indexes_buffer),
+            (3, &a_outputs_buffer),
+        ],
+    );
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
-        layout: &bind_group_layout,
+        layout: bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -232,6 +227,47 @@ async fn spmv_gpu_ei(
     input
 }
 
+fn make_bind_group(
+    device: &Device,
+    bind_group_layout: &BindGroupLayout,
+    resources: &[(u32, &Buffer)],
+) -> BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: bind_group_layout,
+        entries: &resources
+            .iter()
+            .map(|(binding, resource)| wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: resource.as_entire_binding(),
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn create_buffer(device: &Device, content: &[u32], usage: BufferUsages) -> Buffer {
+    device.create_buffer_init(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&content),
+        usage,
+    })
+}
+
+fn make_compute_pipeline(device: &Device, source: &str, entry_point: &str) -> ComputePipeline {
+    let cs_module: ShaderModule = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
+    });
+    let compute_pipeline: ComputePipeline =
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &cs_module,
+            entry_point,
+        });
+    compute_pipeline
+}
+
 #[cfg(test)]
 fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
     for i in 0..input.y.len() {
@@ -261,6 +297,9 @@ fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: 
                 let from_index = *input.csr.indexes.get_unchecked(i) as usize;
                 let to_index = *input.csr.indexes.get_unchecked(i + 1) as usize;
                 let delta = *input.x.get_unchecked(i);
+                if delta == 0 {
+                    continue;
+                };
                 for i in input
                     .csr
                     .outputs
