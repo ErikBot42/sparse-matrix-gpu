@@ -123,9 +123,7 @@ async fn spmv_gpu_ei(
     mut input: SpmvData,
     repeat_operation: usize,
 ) -> SpmvData {
-    let source = include_str!("shader.wgsl");
-    let entry_point = "main";
-    let compute_pipeline = make_compute_pipeline(device, source, entry_point);
+    let compute_pipeline = make_compute_pipeline(device, include_str!("shader.wgsl"), "main");
 
     let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
     let y_size = y_slice_size as BufferAddress;
@@ -141,47 +139,20 @@ async fn spmv_gpu_ei(
 
     let read_only_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
 
-    let y_buffer = create_buffer(device, &input.y, default_usages);
-    let x_buffer = create_buffer(device, &input.x, read_only_usage);
-    let a_indexes_buffer = create_buffer(device, &input.csr.indexes, read_only_usage);
-    let a_outputs_buffer = create_buffer(device, &input.csr.outputs, read_only_usage);
-
     // this is obtained from the **shader**
     let bind_group_layout = &compute_pipeline.get_bind_group_layout(0);
 
+    let y_buffer = create_buffer(device, &input.y, default_usages);
     let bind_group = make_bind_group(
         device,
         bind_group_layout,
-        &[
+        [
             (0, &y_buffer),
-            (1, &x_buffer),
-            (2, &a_indexes_buffer),
-            (3, &a_outputs_buffer),
+            (1, &create_buffer(device, &input.x, read_only_usage)),
+            (2, &create_buffer(device, &input.csr.indexes, read_only_usage)),
+            (3, &create_buffer(device, &input.csr.outputs, read_only_usage)),
         ],
     );
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: y_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: x_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: a_indexes_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: a_outputs_buffer.as_entire_binding(),
-            },
-        ],
-    });
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -227,21 +198,19 @@ async fn spmv_gpu_ei(
     input
 }
 
-fn make_bind_group(
+fn make_bind_group<const LENGTH: usize>(
     device: &Device,
     bind_group_layout: &BindGroupLayout,
-    resources: &[(u32, &Buffer)],
+    resources: [(u32, &Buffer); LENGTH],
 ) -> BindGroup {
+    let entries = resources.map(|(binding, resource)| wgpu::BindGroupEntry {
+        binding,
+        resource: resource.as_entire_binding(),
+    });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: bind_group_layout,
-        entries: &resources
-            .iter()
-            .map(|(binding, resource)| wgpu::BindGroupEntry {
-                binding: *binding,
-                resource: resource.as_entire_binding(),
-            })
-            .collect::<Vec<_>>(),
+        entries: &entries,
     })
 }
 
