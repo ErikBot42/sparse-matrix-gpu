@@ -2,12 +2,8 @@ use std::hint::black_box;
 use std::time::Instant;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferAddress,
-    BufferBindingType, BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor,
-    Device, DeviceDescriptor, Features, Instance, Maintain, MapMode, PipelineLayout,
-    PipelineLayoutDescriptor, QuerySet, QuerySetDescriptor, QueryType, Queue, ShaderModule,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    BindGroup, BindGroupLayout, Buffer, BufferAddress, BufferUsages, ComputePipeline, Device,
+    Queue, ShaderModule,
 };
 
 #[cfg(test)]
@@ -16,21 +12,23 @@ mod tests;
 fn main() {
     env_logger::init();
     let i = u16::MAX.into();
-    let repeat_operation = 32;
+    let repeat_operation = 128;
 
     let data = black_box(SpmvData::new_random(black_box(i)));
+    let data_gpu = data.clone();
+    let data_cpu = data;
 
     let now = Instant::now();
-    let data_gpu = spmv_gpu(data.clone(), repeat_operation);
-    let gpu_time = now.elapsed().as_millis();
+    let data_gpu = spmv_gpu(data_gpu, repeat_operation);
+    let gpu_time = now.elapsed();
 
     let now = Instant::now();
-    let data_cpu = spmv_cpu_unchecked_indexing(data, repeat_operation);
-    let cpu_time = now.elapsed().as_millis();
+    let data_cpu = spmv_cpu_csr_unchecked_indexing(data_cpu, repeat_operation);
+    let cpu_time = now.elapsed();
 
     println!("Data size: {i}");
-    println!("Elapsed GPU: {gpu_time} ms");
-    println!("Elapsed CPU: {cpu_time} ms");
+    println!("Elapsed GPU: {gpu_time:?}");
+    println!("Elapsed CPU: {cpu_time:?}");
     assert!(data_cpu.y == data_gpu.y, "Compution not equal");
     println!("Everything completed as expected.");
 }
@@ -137,26 +135,20 @@ async fn spmv_gpu_ei(
 
     let default_usages = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
 
-    let read_only_usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
+    let read_only = BufferUsages::STORAGE | BufferUsages::COPY_DST;
 
     // this is obtained from the **shader**
     let bind_group_layout = &compute_pipeline.get_bind_group_layout(0);
 
-    let y_buffer = create_buffer(device, &input.y, default_usages);
+    let y_buffer = create_buff(device, &input.y, default_usages);
     let bind_group = make_bind_group(
         device,
         bind_group_layout,
         [
             (0, &y_buffer),
-            (1, &create_buffer(device, &input.x, read_only_usage)),
-            (
-                2,
-                &create_buffer(device, &input.csr.indexes, read_only_usage),
-            ),
-            (
-                3,
-                &create_buffer(device, &input.csr.outputs, read_only_usage),
-            ),
+            (1, &create_buff(device, &input.x, read_only)),
+            (2, &create_buff(device, &input.csr.indexes, read_only)),
+            (3, &create_buff(device, &input.csr.outputs, read_only)),
         ],
     );
 
@@ -186,7 +178,7 @@ async fn spmv_gpu_ei(
         .await
         .map(|_| {
             let data = buffer_slice.get_mapped_range();
-            let result = bytemuck::cast_slice(&data).to_vec(); 
+            let result = bytemuck::cast_slice(&data).to_vec();
             drop(data); // needs to be done before unmap
             staging_buffer.unmap(); // Unmaps buffer from memory
             result
@@ -213,7 +205,7 @@ fn make_bind_group<const LENGTH: usize>(
     })
 }
 
-fn create_buffer(device: &Device, content: &[u32], usage: BufferUsages) -> Buffer {
+fn create_buff(device: &Device, content: &[u32], usage: BufferUsages) -> Buffer {
     device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&content),
@@ -236,8 +228,7 @@ fn make_compute_pipeline(device: &Device, source: &str, entry_point: &str) -> Co
     compute_pipeline
 }
 
-#[cfg(test)]
-fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
+fn spmv_cpu_csr_reference(mut input: SpmvData) -> SpmvData {
     for i in 0..input.y.len() {
         let from_index = input.csr.indexes[i] as usize;
         let to_index = input.csr.indexes[i + 1] as usize;
@@ -253,7 +244,25 @@ fn spmv_cpu_reference(mut input: SpmvData) -> SpmvData {
     input
 }
 
-fn spmv_cpu_unchecked_indexing(mut input: SpmvData, repeat_operation: usize) -> SpmvData {
+
+fn spmv_cpu_csc_reference(mut input: SpmvData) -> SpmvData {
+    for i in 0..input.y.len() {
+        let from_index = input.csr.indexes[i] as usize;
+        let to_index = input.csr.indexes[i + 1] as usize;
+        let delta = input.x[i];
+        for i in input.csr.outputs[from_index..to_index]
+            .iter()
+            .map(|i| *i as usize)
+        {
+            let r = &mut input.y[i];
+            *r = r.wrapping_add(delta);
+        }
+    }
+    input
+}
+
+
+fn spmv_cpu_csr_unchecked_indexing(mut input: SpmvData, repeat_operation: usize) -> SpmvData {
     spmv_cpu_unchecked_indexing_in_place(&mut input, repeat_operation);
     input
 }
