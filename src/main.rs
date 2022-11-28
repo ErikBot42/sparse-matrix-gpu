@@ -149,8 +149,14 @@ async fn spmv_gpu_ei(
         [
             (0, &y_buffer),
             (1, &create_buffer(device, &input.x, read_only_usage)),
-            (2, &create_buffer(device, &input.csr.indexes, read_only_usage)),
-            (3, &create_buffer(device, &input.csr.outputs, read_only_usage)),
+            (
+                2,
+                &create_buffer(device, &input.csr.indexes, read_only_usage),
+            ),
+            (
+                3,
+                &create_buffer(device, &input.csr.outputs, read_only_usage),
+            ),
         ],
     );
 
@@ -175,28 +181,21 @@ async fn spmv_gpu_ei(
     device.poll(wgpu::Maintain::Wait);
     println!("Elapsed {} ms during GPU poll", now.elapsed().as_millis());
 
-    input.y = if let Some(Ok(())) = receiver.receive().await {
-        // Gets contents of buffer
-        let data = buffer_slice.get_mapped_range();
-        // Since contents are got in bytes, this converts these bytes back to u32
-        let result = bytemuck::cast_slice(&data).to_vec();
-
-        // With the current interface, we have to make sure all mapped views are
-        // dropped before we unmap the buffer.
-        drop(data);
-        staging_buffer.unmap(); // Unmaps buffer from memory
-                                // If you are familiar with C++ these 2 lines can be thought of similarly to:
-                                //   delete myPointer;
-                                //   myPointer = NULL;
-                                // It effectively frees the memory
-
-        // Returns data from buffer
-        result
-    } else {
-        panic!("failed to run compute on gpu!")
-    };
+    input.y = receiver
+        .receive()
+        .await
+        .map(|_| {
+            let data = buffer_slice.get_mapped_range();
+            let result = bytemuck::cast_slice(&data).to_vec(); 
+            drop(data); // needs to be done before unmap
+            staging_buffer.unmap(); // Unmaps buffer from memory
+            result
+        })
+        .expect("failed to run compute on gpu");
     input
 }
+
+mod gpu {}
 
 fn make_bind_group<const LENGTH: usize>(
     device: &Device,
