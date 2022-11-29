@@ -48,7 +48,7 @@ struct SpmvData {
 impl SpmvData {
     fn new(lil: &Lil, x: DenseVector, y: DenseVector) -> Self {
         let csr = Csr::from_lil(lil);
-        let csc = Csc::from_lil(&lil.reversed());
+        let csc = Csc::from_lil(lil);
         assert_eq!(csr.indexes.len() - 1, x.len());
         assert_eq!(csc.indexes.len() - 1, x.len());
         assert_eq!(y.len(), x.len());

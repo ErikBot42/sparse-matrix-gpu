@@ -18,8 +18,6 @@ fn test_csc() {
         assert_eq!(data1.y, data2.y);
     }
 }
-
-
 #[test]
 fn test_gpu() {
     for i in [10, 100, 1000] {
