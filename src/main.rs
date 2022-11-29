@@ -12,26 +12,6 @@ mod tests;
 fn main() {
     env_logger::init();
     run_benches();
-    //let i = u16::MAX.into();
-    //let repeat_operation = 128;
-
-    //let data = black_box(SpmvData::new_random(black_box(i)));
-    //let data_gpu = data.clone();
-    //let data_cpu = data;
-
-    //let now = Instant::now();
-    //let data_gpu = spmv_gpu(data_gpu, repeat_operation);
-    //let gpu_time = now.elapsed();
-
-    //let now = Instant::now();
-    //let data_cpu = spmv_cpu_csr_unchecked_indexing(data_cpu, repeat_operation);
-    //let cpu_time = now.elapsed();
-
-    //println!("Data size: {i}");
-    //println!("Elapsed GPU: {gpu_time:?}");
-    //println!("Elapsed CPU: {cpu_time:?}");
-    //assert!(data_cpu.y == data_gpu.y, "Compution not equal");
-    //println!("Everything completed as expected.");
 }
 
 fn run_benches() {
@@ -40,10 +20,10 @@ fn run_benches() {
     let repeat_operation = 4096;
     let data_orig = black_box(SpmvData::new_random(black_box(i)));
 
-    //let data = black_box(data_orig.clone());
-    //let now = Instant::now();
-    //let data = spmv_gpu(data, repeat_operation);
-    //results.push((data, now.elapsed(), "gpu csr"));
+    let data = black_box(data_orig.clone());
+    let now = Instant::now();
+    let data = spmv_gpu(data, repeat_operation);
+    results.push((data, now.elapsed(), "gpu csr"));
 
     let data = black_box(data_orig.clone());
     let now = Instant::now();

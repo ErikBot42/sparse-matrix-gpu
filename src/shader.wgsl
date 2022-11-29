@@ -6,7 +6,6 @@ var<storage, read_write> ys: array<atomic<u32>>;
 @binding(1)
 var<storage, read> xs: array<u32>;
 
-
 @group(0)
 @binding(2)
 var<storage, read> indexes: array<u32>;
