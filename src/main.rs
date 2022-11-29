@@ -11,26 +11,58 @@ mod tests;
 
 fn main() {
     env_logger::init();
+    run_benches();
+    //let i = u16::MAX.into();
+    //let repeat_operation = 128;
+
+    //let data = black_box(SpmvData::new_random(black_box(i)));
+    //let data_gpu = data.clone();
+    //let data_cpu = data;
+
+    //let now = Instant::now();
+    //let data_gpu = spmv_gpu(data_gpu, repeat_operation);
+    //let gpu_time = now.elapsed();
+
+    //let now = Instant::now();
+    //let data_cpu = spmv_cpu_csr_unchecked_indexing(data_cpu, repeat_operation);
+    //let cpu_time = now.elapsed();
+
+    //println!("Data size: {i}");
+    //println!("Elapsed GPU: {gpu_time:?}");
+    //println!("Elapsed CPU: {cpu_time:?}");
+    //assert!(data_cpu.y == data_gpu.y, "Compution not equal");
+    //println!("Everything completed as expected.");
+}
+
+fn run_benches() {
+    let mut results: Vec<(SpmvData, std::time::Duration, &str)> = Vec::new();
     let i = u16::MAX.into();
-    let repeat_operation = 128;
+    let repeat_operation = 4096;
+    let data_orig = black_box(SpmvData::new_random(black_box(i)));
 
-    let data = black_box(SpmvData::new_random(black_box(i)));
-    let data_gpu = data.clone();
-    let data_cpu = data;
+    //let data = black_box(data_orig.clone());
+    //let now = Instant::now();
+    //let data = spmv_gpu(data, repeat_operation);
+    //results.push((data, now.elapsed(), "gpu csr"));
 
+    let data = black_box(data_orig.clone());
     let now = Instant::now();
-    let data_gpu = spmv_gpu(data_gpu, repeat_operation);
-    let gpu_time = now.elapsed();
+    let data = spmv_cpu_csr_unchecked_indexing(data, repeat_operation);
+    results.push((data, now.elapsed(), "cpu csr"));
 
+    let data = black_box(data_orig.clone());
     let now = Instant::now();
-    let data_cpu = spmv_cpu_csr_unchecked_indexing(data_cpu, repeat_operation);
-    let cpu_time = now.elapsed();
+    let data = spmv_cpu_csc_unchecked_indexing(data, repeat_operation);
+    results.push((data, now.elapsed(), "cpu csc"));
 
-    println!("Data size: {i}");
-    println!("Elapsed GPU: {gpu_time:?}");
-    println!("Elapsed CPU: {cpu_time:?}");
-    assert!(data_cpu.y == data_gpu.y, "Compution not equal");
-    println!("Everything completed as expected.");
+    assert!(
+        results.windows(2).map(|a| a[0].0.y == a[1].0.y).all(|x| x),
+        "Implementation error: computation differs"
+    );
+
+    for (_, duration, name) in results {
+        println!("{name}: {duration:?}")
+    }
 }
 
 type DenseVector = Vec<u32>;
@@ -302,7 +334,7 @@ fn spmv_cpu_csr_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operati
                     .map(|i| *i as usize)
                 {
                     let r = input.y.get_unchecked_mut(i);
-                    *r = black_box(r.wrapping_add(delta));
+                    *r = r.wrapping_add(delta);
                 }
             }
         }
