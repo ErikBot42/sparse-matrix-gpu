@@ -244,23 +244,19 @@ fn spmv_cpu_csr_reference(mut input: SpmvData) -> SpmvData {
     input
 }
 
-
 fn spmv_cpu_csc_reference(mut input: SpmvData) -> SpmvData {
     for i in 0..input.y.len() {
-        let from_index = input.csr.indexes[i] as usize;
-        let to_index = input.csr.indexes[i + 1] as usize;
-        let delta = input.x[i];
-        for i in input.csr.outputs[from_index..to_index]
+        let from_index = input.csc.indexes[i] as usize;
+        let to_index = input.csc.indexes[i + 1] as usize;
+
+        input.y[i] = input.csc.outputs[from_index..to_index]
             .iter()
             .map(|i| *i as usize)
-        {
-            let r = &mut input.y[i];
-            *r = r.wrapping_add(delta);
-        }
+            .map(|i| input.x[i])
+            .fold(input.y[i], |a: u32, b: u32| a.wrapping_add(b));
     }
     input
 }
-
 
 fn spmv_cpu_csr_unchecked_indexing(mut input: SpmvData, repeat_operation: usize) -> SpmvData {
     spmv_cpu_unchecked_indexing_in_place(&mut input, repeat_operation);
@@ -319,11 +315,15 @@ mod sparse {
             Self::new(tmp)
         }
         pub(super) fn reversed(&self) -> Self {
-            let mut tmp = Self::new_i(self.i.len());
-            for (i, list) in self.i.iter().enumerate() {
-                for j in list {
-                    tmp[*j as usize].push(i as u32)
+            Self::from_edgelist(&EdgeList::from_lil(self).reversed())
+        }
+        pub(super) fn from_edgelist(edgelist: &EdgeList) -> Self {
+            let mut tmp = Vec::new();
+            for (i, j) in edgelist.edges.iter().map(|(i, j)| (*i as usize, *j)) {
+                while i >= tmp.len() {
+                    tmp.push(Vec::new())
                 }
+                tmp[i].push(j);
             }
             Self::new(tmp)
         }
@@ -373,20 +373,61 @@ mod sparse {
         }
     }
 
+    pub(super) struct EdgeList {
+        pub(super) edges: Vec<(u32, u32)>,
+    }
+    impl EdgeList {
+        fn from_lil(lil: &Lil) -> Self {
+            let mut edges: Vec<(u32, u32)> = Vec::new();
+            for (i, list) in lil.i.iter().enumerate() {
+                for j in list {
+                    edges.push((i as u32, *j));
+                }
+            }
+            edges.sort();
+            Self { edges }
+        }
+        fn reversed(&self) -> Self {
+            let mut edges: Vec<_> = self.edges.iter().cloned().map(|(i, j)| (j, i)).collect();
+            edges.sort();
+            Self { edges }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
-        use super::*;
-        #[test]
-        fn test_sparse_lil() {
+        fn test_iter() -> impl Iterator<Item = (u64, usize)> {
+            itertools::iproduct!([42, 67, 43, 99], [10, 101, 1230, 42])
+        }
+        fn test_lil_iter() -> impl Iterator<Item = Lil> {
+            test_iter().map(|(seed, size)| random_lil(seed, size))
+        }
+        fn random_lil(seed: u64, size: usize) -> Lil {
             use rand::prelude::*;
             use rand::rngs::StdRng;
             let matrix_density = 4.0;
-            let mut rng = StdRng::seed_from_u64(42);
-
-            let lil = Lil::new_random(&mut rng, matrix_density, 128);
-            let lil_reversed = lil.reversed();
-            assert_ne!(lil, lil_reversed);
-            assert_eq!(lil, lil_reversed.reversed());
+            let mut rng = StdRng::seed_from_u64(seed);
+            Lil::new_random(&mut rng, matrix_density, size)
+        }
+        use super::*;
+        #[test]
+        fn test_edgelist_reverse() {
+            for lil in test_lil_iter() {
+                let edge = EdgeList::from_lil(&lil);
+                assert_eq!(edge.edges, edge.reversed().reversed().edges);
+            }
+        }
+        #[test]
+        fn test_sparse_lil() {
+            for lil in test_lil_iter() {
+                let lil_reversed = lil.reversed();
+                assert_eq!(
+                    EdgeList::from_lil(&lil).edges,
+                    EdgeList::from_lil(&lil_reversed).reversed().edges
+                );
+                assert_ne!(lil, lil_reversed);
+                assert_eq!(lil, lil_reversed.reversed());
+            }
         }
     }
 }
