@@ -1,8 +1,9 @@
 use super::*;
+
+
 #[test]
-fn test_unchecked_indexing() {
+fn test_unchecked_indexing_csr() {
     for i in [10, 100, 1000] {
-        dbg!(i);
         let data = SpmvData::new_random(i);
         let data1 = spmv_cpu_csr_reference(data.clone());
         let data2 = spmv_cpu_csr_unchecked_indexing(data.clone(), 1);
@@ -10,7 +11,16 @@ fn test_unchecked_indexing() {
     }
 }
 #[test]
-fn test_csc() {
+fn test_unchecked_indexing_csc() {
+    for i in [10, 100, 1000] {
+        let data = SpmvData::new_random(i);
+        let data1 = spmv_cpu_csc_reference(data.clone());
+        let data2 = spmv_cpu_csc_unchecked_indexing(data.clone(), 1);
+        assert_eq!(data1.y, data2.y);
+    }
+}
+#[test]
+fn test_csc_csr_diff() {
     for i in [10, 100, 1000] {
         let data = SpmvData::new_random(i);
         let data1 = spmv_cpu_csr_reference(data.clone());
