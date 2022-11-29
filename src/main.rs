@@ -245,25 +245,39 @@ fn spmv_cpu_csr_reference(mut input: SpmvData) -> SpmvData {
 }
 
 fn spmv_cpu_csc_reference(mut input: SpmvData) -> SpmvData {
-    for i in 0..input.y.len() {
+    for (i, y_curr) in input.y.iter_mut().enumerate() {
         let from_index = input.csc.indexes[i] as usize;
         let to_index = input.csc.indexes[i + 1] as usize;
-
-        input.y[i] = input.csc.outputs[from_index..to_index]
+        *y_curr = input.csc.outputs[from_index..to_index]
             .iter()
-            .map(|i| *i as usize)
-            .map(|i| input.x[i])
-            .fold(input.y[i], |a: u32, b: u32| a.wrapping_add(b));
+            .map(|i| input.x[*i as usize])
+            .fold(*y_curr, |a: u32, b: u32| a.wrapping_add(b));
     }
     input
 }
 
+fn spmv_cpu_csc_unchecked_indexing_in_place(input: &mut SpmvData) {
+    unsafe {
+        for (i, y_curr) in input.y.iter_mut().enumerate() {
+            let from_index = *input.csc.indexes.get_unchecked(i) as usize;
+            let to_index = *input.csc.indexes.get_unchecked(i + 1) as usize;
+            *y_curr = input
+                .csc
+                .outputs
+                .get_unchecked(from_index..to_index)
+                .iter()
+                .map(|i| *input.x.get_unchecked(*i as usize))
+                .fold(*y_curr, |a: u32, b: u32| a.wrapping_add(b));
+        }
+    }
+}
+
 fn spmv_cpu_csr_unchecked_indexing(mut input: SpmvData, repeat_operation: usize) -> SpmvData {
-    spmv_cpu_unchecked_indexing_in_place(&mut input, repeat_operation);
+    spmv_cpu_csr_unchecked_indexing_in_place(&mut input, repeat_operation);
     input
 }
 
-fn spmv_cpu_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: usize) {
+fn spmv_cpu_csr_unchecked_indexing_in_place(input: &mut SpmvData, repeat_operation: usize) {
     unsafe {
         for _ in 0..repeat_operation {
             for i in 0..input.y.len() {
