@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[test]
 fn test_unchecked_indexing_csr() {
     for i in [10, 100, 1000] {
@@ -29,13 +28,22 @@ fn test_csc_csr_diff() {
     }
 }
 #[test]
-fn test_gpu() {
+fn test_gpu_csc() {
     for i in [10, 100, 1000] {
         dbg!(i);
         let data = SpmvData::new_random(i);
         let data1 = spmv_cpu_csr_reference(data.clone());
-        let data2 = spmv_gpu(data.clone(), 1);
+        let data2 = spmv_gpu(data.clone(), 1, true);
         assert_eq!(data1.y, data2.y);
     }
 }
-
+#[test]
+fn test_gpu_csr() {
+    for i in [10, 100, 1000] {
+        dbg!(i);
+        let data = SpmvData::new_random(i);
+        let data1 = spmv_cpu_csr_reference(data.clone());
+        let data2 = spmv_gpu(data.clone(), 1, false);
+        assert_eq!(data1.y, data2.y);
+    }
+}

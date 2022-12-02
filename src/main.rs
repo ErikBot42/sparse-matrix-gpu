@@ -11,19 +11,22 @@ mod tests;
 
 fn main() {
     env_logger::init();
-    run_benches();
+    run_benches(u16::MAX.into(), 128);
 }
 
-fn run_benches() {
+fn run_benches(i: usize, repeat_operation: usize) {
     let mut results: Vec<(SpmvData, std::time::Duration, &str)> = Vec::new();
-    let i = u16::MAX.into();
-    let repeat_operation = 4096;
     let data_orig = black_box(SpmvData::new_random(black_box(i)));
 
     let data = black_box(data_orig.clone());
     let now = Instant::now();
-    let data = spmv_gpu(data, repeat_operation);
+    let data = spmv_gpu(data, repeat_operation, false);
     results.push((data, now.elapsed(), "gpu csr"));
+
+    let data = black_box(data_orig.clone());
+    let now = Instant::now();
+    let data = spmv_gpu(data, repeat_operation, true);
+    results.push((data, now.elapsed(), "gpu csc"));
 
     let data = black_box(data_orig.clone());
     let now = Instant::now();
@@ -35,14 +38,15 @@ fn run_benches() {
     let data = spmv_cpu_csc_unchecked_indexing(data, repeat_operation);
     results.push((data, now.elapsed(), "cpu csc"));
 
+    println!("Results:");
+    for (_, duration, name) in results.iter() {
+        println!("{name}: {duration:?}")
+    }
+
     assert!(
         results.windows(2).map(|a| a[0].0.y == a[1].0.y).all(|x| x),
         "Implementation error: computation differs"
     );
-
-    for (_, duration, name) in results {
-        println!("{name}: {duration:?}")
-    }
 }
 
 type DenseVector = Vec<u32>;
@@ -69,8 +73,7 @@ impl SpmvData {
     fn new_random(length: usize) -> Self {
         use rand::prelude::*;
         use rand::rngs::StdRng;
-        let matrix_density = 0.1;
-        let x_density = 0.8;
+        let x_density = 0.1;
         let mut rng = StdRng::seed_from_u64(42);
         let (x, y): (DenseVector, DenseVector) = (0..length)
             .map(|_| {
@@ -86,8 +89,7 @@ impl SpmvData {
             .unzip();
         let mut ll: ListOfLists = (0..length).map(|_| Vec::new()).collect();
 
-        //let connections_to_add = ((length * length) as f64 * matrix_density) as u32;
-        let connections_to_add = length * 16;
+        let connections_to_add = length * 2;
 
         for _ in 0..connections_to_add {
             ll[rng.gen_range(0..length)].push(rng.gen_range(0..length) as u32);
@@ -95,10 +97,6 @@ impl SpmvData {
         assert_eq!(ll.len(), length);
         Self::new(&Lil::new(ll), x, y)
     }
-}
-
-fn spmv_gpu(input: SpmvData, repeat_operation: usize) -> SpmvData {
-    pollster::block_on(spmv_gpu_i(input, repeat_operation))
 }
 
 async fn prep_gpu() -> (Device, Queue) {
@@ -122,9 +120,12 @@ async fn prep_gpu() -> (Device, Queue) {
     dbg!(adapter.get_info());
     (device, queue)
 }
-async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize) -> SpmvData {
+fn spmv_gpu(input: SpmvData, repeat_operation: usize, csc: bool) -> SpmvData {
+    pollster::block_on(spmv_gpu_i(input, repeat_operation, csc))
+}
+async fn spmv_gpu_i(input: SpmvData, repeat_operation: usize, csc: bool) -> SpmvData {
     let (device, queue) = prep_gpu().await;
-    spmv_gpu_ei(&device, &queue, input, repeat_operation).await
+    spmv_gpu_ei(&device, &queue, input, repeat_operation, csc).await
 }
 
 async fn spmv_gpu_ei(
@@ -132,8 +133,17 @@ async fn spmv_gpu_ei(
     queue: &Queue,
     mut input: SpmvData,
     repeat_operation: usize,
+    csc: bool,
 ) -> SpmvData {
-    let compute_pipeline = make_compute_pipeline(device, include_str!("shader.wgsl"), "main");
+    let compute_pipeline = make_compute_pipeline(
+        device,
+        if csc {
+            include_str!("shader_csc.wgsl")
+        } else {
+            include_str!("shader.wgsl")
+        },
+        "main",
+    );
 
     let y_slice_size = (&input.y).len() * std::mem::size_of::<u32>();
     let y_size = y_slice_size as BufferAddress;
@@ -159,8 +169,30 @@ async fn spmv_gpu_ei(
         [
             (0, &y_buffer),
             (1, &create_buff(device, &input.x, read_only)),
-            (2, &create_buff(device, &input.csr.indexes, read_only)),
-            (3, &create_buff(device, &input.csr.outputs, read_only)),
+            (
+                2,
+                &create_buff(
+                    device,
+                    if csc {
+                        &input.csc.indexes
+                    } else {
+                        &input.csr.indexes
+                    },
+                    read_only,
+                ),
+            ),
+            (
+                3,
+                &create_buff(
+                    device,
+                    if csc {
+                        &input.csc.outputs
+                    } else {
+                        &input.csr.outputs
+                    },
+                    read_only,
+                ),
+            ),
         ],
     );
 
